@@ -1,17 +1,17 @@
 # CCSD_DOC_OI_Formatter
 
 Automate formatting of **USAF Operating Instructions (OIs)** into compliance
-with **AFH 33-337** (*The Tongue and Quill*) and **DAFMAN 90-161**
-(*Publishing Processes and Procedures*).
+with **AFH 33-337** (*The Tongue and Quill*) and **DAFMAN 90-161** (*Publishing
+Processes and Procedures*).
 
-The tool is a macro-enabled Word template (`USAF_OI_Formatter.dotm`) with an
-embedded VBA engine. It exposes the same engine three ways:
+**No Word macros are needed.** The tool is a pure Python package that edits the
+`.docx` XML directly (via `python-docx` + `lxml`). It runs:
 
-- **Inside Word (GUI)** — tabbed UserForm for single-file or batch mode.
-- **Inside Word (current document)** — a toolbar button runs the formatter on
-  whatever document is open.
-- **Headless CLI** — a PowerShell driver opens Word via COM and runs the
-  formatter over a file or a folder (for scheduled / scripted batches).
+- As a **CLI** — `usaf-oi-formatter path\to\file.docx [flags]`.
+- As a **Tkinter GUI** — `usaf-oi-formatter-gui` — tabbed dialog with file
+  picker, batch mode, and sticky OI-metadata fields.
+- As a **standalone Windows `.exe`** bundled by PyInstaller for locked-down
+  environments where Python isn't available.
 
 All rules are hard-coded from AFH 33-337 and DAFMAN 90-161 — see
 [`docs/rules.md`](docs/rules.md) for the citation table.
@@ -29,20 +29,20 @@ Given an arbitrary `.docx`, the formatter:
    Accessibility, Releasability).
 4. Walks every paragraph, heuristically classifies it (numbered heading,
    ALL-CAPS heading, body, bullet, attachment title) and reassigns the
-   matching canonical style.
+   matching canonical style — skipping the title block.
 5. Rebuilds the multi-level numbering template (`1.`, `1.1.`, `1.1.1.`,
    `1.1.1.1.`, `1.1.1.1.1.`) and binds it to the five heading styles.
 6. Normalizes bullets to the T&Q sequence (`-`, `•`, `–`, `»`) based on
    indent depth.
-7. Scans for ALL-CAPS acronyms, collects them, and seeds a Glossary
-   (Attachment 1) if the document doesn't already have one.
+7. Scans body text for ALL-CAPS acronyms, collects them, and seeds a
+   Glossary (Attachment 1) if the document doesn't already have one.
 8. Rebuilds `Attachment N—TITLE` headings (em dash, ALL CAPS).
 9. Cleans up whitespace (collapses double-spaces, converts smart quotes to
-   straight, etc.).
+   straight).
 10. Writes a side-car `<name>_changes.txt` describing every change.
 
 Output is saved as `<name>_formatted.docx` next to the source (or in
-`-OutputDir` if specified).
+`--output-dir`).
 
 ## What it does NOT do
 
@@ -53,86 +53,118 @@ reference citations, classification markings, and signature correctness.
 ## Repo layout
 
 ```
-src/vba/                  VBA source (text, git-friendly)
-  modRules.bas              all formatting constants
-  modFormatter.bas          FormatDocument() pipeline
-  modPageSetup.bas          margins / paper / page numbers
-  modStyles.bas             OI style install/refresh
-  modNumbering.bas          multi-level list template
-  modBulletsLists.bas       bullet normalization
-  modHeaderBlock.bas        DAFMAN 90-161 title block builder
-  modAcronyms.bas           first-use expansion + glossary seed
-  modAttachments.bas        Attachment N—TITLE rebuild
-  modReport.bas             change log
-  modBatch.bas              folder iteration
-  modCLI.bas                Application.Run entry points
-  frmMain.frm               tabbed UserForm (GUI)
-  frmReport.frm             change report viewer
-  ThisDocument.cls          AutoExec toolbar wiring
+src/usaf_oi_formatter/
+  rules.py              all formatting constants (tune rules here)
+  meta.py               OIMeta dataclass for title-block inputs
+  formatter.py          orchestrator: format_file(path, meta) -> (out, report)
+  pagesetup.py          margins / paper / page numbers
+  styles.py             installs the OI * paragraph styles
+  numbering.py          multi-level list rebuild via numbering.xml
+  bullets.py            bullet normalization based on indent depth
+  headerblock.py        DAFMAN 90-161 Fig A2.2 title block builder
+  acronyms.py           collect acronyms for the Glossary attachment
+  attachments.py        Attachment N—TITLE rebuild and Glossary seeding
+  hygiene.py            whitespace, smart-quote, dash cleanup
+  report.py             before/after change log (sidecar .txt)
+  batch.py              folder iteration
+  cli.py                argparse entry point
+  gui.py                Tkinter GUI
+  __main__.py           `python -m usaf_oi_formatter`
 tools/
-  Format-USAFOI.ps1         PowerShell headless CLI
-  Install-Addin.ps1         copies .dotm into Word STARTUP
-build/
-  build-dotm.ps1            assembles .dotm from src\vba sources
-docs/rules.md               rule citation table (AFH 33-337 / DAFMAN 90-161)
-tests/samples/              drop test .docx files here
+  build-exe.ps1         PyInstaller wrapper -> dist\*.exe
+tests/
+  test_rules.py
+  test_formatter.py     end-to-end smoke test
+  samples/              drop your own .docx fixtures here
+docs/rules.md           rule citation table
+pyproject.toml
 ```
 
 ## Prerequisites
 
-- Microsoft Word (2016 or newer).
-- Windows PowerShell 5.1 or PowerShell 7+ (for the CLI and build scripts).
-- One-time Word setting: **File → Options → Trust Center → Trust Center
-  Settings → Macro Settings → "Trust access to the VBA project object model"**
-  must be checked, otherwise `build\build-dotm.ps1` cannot inject the VBA
-  sources.
+- **Python 3.10+** (any modern cpython; uses only `python-docx`, `lxml`, and
+  stdlib `tkinter`).
+- **Word 2016+** only if you want to *view* the formatted `.docx`. The
+  formatter itself never launches Word.
 
-## Install
+To build the standalone `.exe`:
+- PowerShell 5.1+ on Windows.
+- The `[dev]` extra (PyInstaller); `tools\build-exe.ps1` installs it into a
+  throwaway `.venv-build`.
 
-```powershell
-# From the repo root:
-powershell -ExecutionPolicy Bypass -File build\build-dotm.ps1
-powershell -ExecutionPolicy Bypass -File tools\Install-Addin.ps1
+## Install (developer / editable)
+
+```bash
+python -m venv .venv
+.venv\Scripts\activate       # Windows
+# source .venv/bin/activate    # macOS/Linux
+pip install -e .[dev]
 ```
-
-After install, restart Word. A **USAF OI Formatter** toolbar appears with
-two buttons:
-
-- **Format OI...** — runs the formatter on the current document with
-  default metadata. Fast path for routine fixes.
-- **Open Formatter GUI** — full tabbed dialog (Single / Batch / Metadata /
-  Options) for richer control.
 
 ## CLI usage
 
 Single file:
 
-```powershell
-tools\Format-USAFOI.ps1 -Path C:\incoming\MyOI.docx `
-    -OPR 'CCSD/CCC' -OIName 'CCSD OI 36-1' `
-    -Date '23 April 2026' -Subject 'Personnel Actions' `
-    -Unit '442d Maintenance Squadron' -Category 'Personnel' `
-    -CertifiedBy 'Col Jane Doe, Commander' -Pages '12'
+```
+usaf-oi-formatter C:\incoming\MyOI.docx ^
+    --opr "CCSD/CCC" --oi-number "CCSD OI 36-1" ^
+    --date "23 April 2026" --subject "Personnel Actions" ^
+    --unit "442d Maintenance Squadron" --category "Personnel" ^
+    --certified-by "Col Jane Doe, Commander" --pages 12
 ```
 
 Recursive batch with custom output directory:
 
-```powershell
-tools\Format-USAFOI.ps1 -Path C:\incoming -Recurse -OutputDir C:\out
+```
+usaf-oi-formatter C:\incoming --recurse --output-dir C:\out
 ```
 
 Exit code is `0` on success, `1` if any file failed. See the emitted
 `*_changes.txt` and the master `batch_<timestamp>.log` for details.
 
+Run `usaf-oi-formatter --help` for the full flag list.
+
+## GUI usage
+
+```
+usaf-oi-formatter-gui
+```
+
+Tabs: **Input** (single file or batch folder + output folder) and
+**OI Metadata** (Unit, OI number, date, OPR, Supersedes, ...). Metadata
+values persist to `~/.usaf_oi_formatter.json` so recurring fields don't need
+retyping.
+
+## Build a standalone Windows `.exe`
+
+For use on machines without Python installed:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\build-exe.ps1 -Clean
+```
+
+Produces `dist\usaf-oi-formatter.exe` (CLI) and
+`dist\usaf-oi-formatter-gui.exe` (windowed Tk app). Both are self-contained
+and can be copied to any Windows machine.
+
+## Tests
+
+```bash
+pytest
+```
+
+Includes an end-to-end test that builds a non-compliant `.docx`, runs the
+full pipeline, and asserts the output has the expected styles, title block,
+and glossary attachment.
+
 ## Changing rules
 
-1. Edit `src/vba/modRules.bas` (single source of truth).
-2. Update the relevant row in `docs/rules.md` with the new AFH/DAFMAN
-   reference.
-3. Rebuild: `powershell -File build\build-dotm.ps1`.
-4. Re-install: `powershell -File tools\Install-Addin.ps1 -Force`.
-5. Run the tool against `tests/samples/` and verify the diff is confined to
-   the changed rule.
+1. Edit `src/usaf_oi_formatter/rules.py`.
+2. Update the corresponding row in `docs/rules.md` with the AFH/DAFMAN
+   citation.
+3. `pytest` to confirm nothing regressed.
+4. Run the tool against a sample `.docx` and open it in Word to eyeball.
+5. Rebuild the `.exe` if you distribute it: `tools\build-exe.ps1 -Clean`.
 
 ## License
 
