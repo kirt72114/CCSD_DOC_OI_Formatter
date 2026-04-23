@@ -8,7 +8,6 @@ from pathlib import Path
 from typing import Iterable
 
 from . import formatter, rules
-from .meta import OIMeta
 
 
 @dataclass
@@ -23,22 +22,24 @@ class BatchResult:
         return self.error is None
 
 
-def run(paths: Iterable[Path], meta: OIMeta,
+def run(paths: Iterable[Path],
         output_dir: Path | None = None,
         recurse: bool = False,
+        template: Path | None = None,
         log_sink=None) -> list[BatchResult]:
     """Format every .docx under the given paths.
 
     `paths` may contain files or directories. When `recurse`, directories
-    are walked recursively. Writes a master log next to the first path if
-    `log_sink` is None.
+    are walked recursively. When `template` is given, that approved OI's
+    formatting is cloned onto each draft.
     """
-    targets = list(_iter_docx(paths, recurse))
+    paths_list = list(paths)
+    targets = list(_iter_docx(paths_list, recurse))
     results: list[BatchResult] = []
 
     owns_sink = False
     if log_sink is None:
-        first = Path(next(iter(paths))).resolve()
+        first = Path(paths_list[0]).resolve()
         base_dir = first if first.is_dir() else first.parent
         log_path = base_dir / f"batch_{datetime.now():%Y%m%d_%H%M%S}.log"
         log_sink = log_path.open("w", encoding="utf-8")
@@ -46,11 +47,14 @@ def run(paths: Iterable[Path], meta: OIMeta,
 
     try:
         log_sink.write(f"USAF OI Formatter batch run {datetime.now().isoformat()}\n")
+        if template is not None:
+            log_sink.write(f"Template: {template}\n")
         log_sink.write(f"Files: {len(targets)}\n\n")
 
         for target in targets:
             try:
-                out_path, report_path = formatter.format_file(target, meta, output_dir)
+                out_path, report_path = formatter.format_file(
+                    target, output_dir=output_dir, template=template)
                 results.append(BatchResult(target, out_path, report_path, None))
                 log_sink.write(f"OK    {target}  ->  {out_path}\n")
             except Exception as exc:  # noqa: BLE001 - batch keeps going

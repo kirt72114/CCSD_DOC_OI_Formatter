@@ -1,73 +1,61 @@
-"""Orchestrator: runs the full formatting pipeline against one .docx."""
+"""Orchestrator.
+
+Two modes:
+
+- Template mode (recommended): given an approved OI as a reference
+  template, copy its styles, numbering, headers, footers, theme, and
+  page setup onto the draft. See `template.py` for the mechanics.
+
+- Hygiene-only mode (no template): just collapse double spaces, convert
+  smart quotes to straight, etc. No structural rewrites.
+"""
 
 from __future__ import annotations
 
-import re
+import shutil
 from pathlib import Path
 
 import docx
 
-from . import (
-    acronyms,
-    attachments,
-    bullets,
-    headerblock,
-    hygiene,
-    numbering,
-    pagesetup,
-    report as report_mod,
-    rules,
-    styles,
-)
-from .meta import OIMeta
-
-_RE_NUMBERED_HEADING = re.compile(r"^(\d+(?:\.\d+){0,4})\.?\s+")
+from . import hygiene
+from . import report as report_mod
+from . import rules
+from . import template as template_mod
 
 
-def format_file(src: Path, meta: OIMeta, output_dir: Path | None = None) -> tuple[Path, Path]:
-    """Format `src` and save next to it (or into `output_dir`).
+def format_file(src: Path,
+                output_dir: Path | None = None,
+                template: Path | None = None) -> tuple[Path, Path]:
+    """Format `src`. Writes the result next to it (or into `output_dir`)
+    and returns `(formatted_path, report_path)`.
 
-    Returns (formatted_path, report_path).
+    If `template` is given, it is treated as an approved OI and its
+    formatting parts are cloned onto the draft. Otherwise the draft gets
+    only text hygiene.
     """
     src = Path(src)
-    doc = docx.Document(str(src))
+    out_path = _output_path(src, output_dir)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
 
     report = report_mod.ChangeReport(src)
+
+    if template is not None:
+        report.note("template", f"Cloning formatting from {Path(template).name}")
+        template_mod.apply_template(src, Path(template), out_path)
+    else:
+        report.note("copy", "No template supplied; performing hygiene only")
+        shutil.copyfile(src, out_path)
+
+    doc = docx.Document(str(out_path))
     report.snapshot_pre(_snapshot(doc))
-
-    report.note("page", "Applying margins and page setup")
-    pagesetup.apply(doc)
-
-    report.note("styles", "Installing OI styles")
-    styles.install_or_refresh(doc)
-
-    report.note("header", "Rebuilding DAFMAN 90-161 title block")
-    headerblock.rebuild(doc, meta.with_defaults())
-
-    report.note("walk", "Classifying paragraphs")
-    _classify_paragraphs(doc)
-
-    report.note("numbering", "Applying 1. / 1.1. / 1.1.1. numbering")
-    numbering.apply(doc)
-
-    report.note("bullets", "Normalizing bullets")
-    bullets.apply(doc)
-
-    report.note("acronyms", "Collecting acronyms")
-    glossary = acronyms.collect(doc)
-    report.note("acronyms", f"Found {len(glossary)} acronyms")
-
-    report.note("attachments", "Rebuilding attachment titles")
-    attachments.apply(doc, glossary)
 
     report.note("hygiene", "Whitespace / quotes / dashes")
     hygiene.apply(doc)
 
-    report.diff_post(_snapshot(doc))
-
-    out_path = _output_path(src, output_dir)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
     doc.save(str(out_path))
+
+    post_doc = docx.Document(str(out_path))
+    report.diff_post(_snapshot(post_doc))
 
     report_path = report.write_sidecar(out_path)
     return out_path, report_path
@@ -91,62 +79,3 @@ def _snapshot(doc) -> dict[str, str]:
         "page.height_emu": str(section.page_height),
         "paragraph.count": str(len(doc.paragraphs)),
     }
-
-
-# ---- paragraph classification --------------------------------------
-
-_PROTECTED_STYLES = frozenset({
-    rules.STY_TITLEBLOCK,
-    rules.STY_TITLE,
-    rules.STY_ATTACH_TITLE,
-})
-
-
-def _classify_paragraphs(doc) -> None:
-    """Heuristically reassign every body paragraph to a canonical OI style.
-
-    Skips anything the header-block builder already styled (title block,
-    compliance banner, attachment titles) and anything inside a table.
-    """
-    for p in doc.paragraphs:
-        if _is_in_table(p):
-            continue
-        if p.style.name in _PROTECTED_STYLES:
-            continue
-
-        text = p.text.strip()
-        if not text:
-            continue
-
-        level = _leading_number_depth(text)
-        if 1 <= level <= rules.MAX_NUMBER_DEPTH:
-            p.style = doc.styles[rules.heading_style_for_level(level)]
-        elif _is_all_caps_heading(text):
-            p.style = doc.styles[rules.STY_H1]
-        else:
-            p.style = doc.styles[rules.STY_BODY]
-
-
-def _is_in_table(paragraph) -> bool:
-    from docx.oxml.ns import qn
-    node = paragraph._p.getparent()
-    while node is not None:
-        if node.tag == qn("w:tbl"):
-            return True
-        node = node.getparent()
-    return False
-
-
-def _leading_number_depth(text: str) -> int:
-    match = _RE_NUMBERED_HEADING.match(text)
-    if not match:
-        return 0
-    return 1 + match.group(1).count(".")
-
-
-def _is_all_caps_heading(text: str) -> bool:
-    if not 3 <= len(text) <= 120:
-        return False
-    if text != text.upper():
-        return False
-    return any(ch.isalpha() for ch in text)

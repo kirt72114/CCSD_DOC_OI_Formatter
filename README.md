@@ -1,170 +1,144 @@
 # CCSD_DOC_OI_Formatter
 
-Automate formatting of **USAF Operating Instructions (OIs)** into compliance
-with **AFH 33-337** (*The Tongue and Quill*) and **DAFMAN 90-161** (*Publishing
-Processes and Procedures*).
+Automate formatting of USAF Operating Instructions (OIs) by cloning the
+formatting of an **approved** OI onto a **draft**. No macros required —
+it's a pure Python tool that edits the `.docx` XML directly.
 
-**No Word macros are needed.** The tool is a pure Python package that edits the
-`.docx` XML directly (via `python-docx` + `lxml`). It runs:
+## How it works
 
-- As a **CLI** — `usaf-oi-formatter path\to\file.docx [flags]`.
-- As a **Tkinter GUI** — `usaf-oi-formatter-gui` — tabbed dialog with file
-  picker, batch mode, and sticky OI-metadata fields.
-- As a **standalone Windows `.exe`** bundled by PyInstaller for locked-down
-  environments where Python isn't available.
+You point the tool at:
 
-All rules are hard-coded from AFH 33-337 and DAFMAN 90-161 — see
-[`docs/rules.md`](docs/rules.md) for the citation table.
+- an **approved OI** (`--template approved.docx`) — a known-good file whose
+  fonts, styles, margins, running headers, footers, and numbering scheme
+  represent your unit's house style;
+- one or more **drafts** — the files whose formatting you want to normalize.
 
-## What it does (automatically)
+The tool produces a `<draft>_formatted.docx` that has the **draft's content**
+in the **template's clothing**. Specifically, these parts of the `.docx`
+are copied from template → draft:
 
-Given an arbitrary `.docx`, the formatter:
+| What | From | Why |
+|---|---|---|
+| `word/styles.xml` | template | All paragraph + character style definitions |
+| `word/numbering.xml` | template | Multi-level list schemes |
+| `word/theme/theme1.xml` | template | Color/font theme |
+| `word/header*.xml` + `word/footer*.xml` | template | Running headers, page numbers |
+| Referenced images (e.g., USAF seal) | template | So the header block renders |
+| Page size, margins, first-page flag | template | Section properties |
+| Draft body content | *draft* | Paragraphs, tables, images stay put |
 
-1. Sets 1" margins, 8.5 × 11 portrait, Arabic page numbers bottom-center
-   (title page suppressed).
-2. Installs canonical styles (`OI Body`, `OI Heading 1..5`, `OI Title`,
-   `OI TitleBlock`, `OI Attachment Title`, `OI Bullet 1..4`).
-3. Rebuilds the DAFMAN 90-161 Figure A2.2 title block from user-supplied
-   metadata (Unit, OI number, date, OPR, Supersedes, Certified by, Pages,
-   Accessibility, Releasability).
-4. Walks every paragraph, heuristically classifies it (numbered heading,
-   ALL-CAPS heading, body, bullet, attachment title) and reassigns the
-   matching canonical style — skipping the title block.
-5. Rebuilds the multi-level numbering template (`1.`, `1.1.`, `1.1.1.`,
-   `1.1.1.1.`, `1.1.1.1.1.`) and binds it to the five heading styles.
-6. Normalizes bullets to the T&Q sequence (`-`, `•`, `–`, `»`) based on
-   indent depth.
-7. Scans body text for ALL-CAPS acronyms, collects them, and seeds a
-   Glossary (Attachment 1) if the document doesn't already have one.
-8. Rebuilds `Attachment N—TITLE` headings (em dash, ALL CAPS).
-9. Cleans up whitespace (collapses double-spaces, converts smart quotes to
-   straight).
-10. Writes a side-car `<name>_changes.txt` describing every change.
-
-Output is saved as `<name>_formatted.docx` next to the source (or in
-`--output-dir`).
-
-## What it does NOT do
-
-Items listed in [`docs/rules.md` § Known gaps](docs/rules.md#known-gaps)
-require human review — most notably tone/voice, semantic acronym accuracy,
-reference citations, classification markings, and signature correctness.
+The draft's embedded images, tables, and body paragraphs are preserved.
 
 ## Repo layout
 
 ```
 src/usaf_oi_formatter/
-  rules.py              all formatting constants (tune rules here)
-  meta.py               OIMeta dataclass for title-block inputs
-  formatter.py          orchestrator: format_file(path, meta) -> (out, report)
-  pagesetup.py          margins / paper / page numbers
-  styles.py             installs the OI * paragraph styles
-  numbering.py          multi-level list rebuild via numbering.xml
-  bullets.py            bullet normalization based on indent depth
-  headerblock.py        DAFMAN 90-161 Fig A2.2 title block builder
-  acronyms.py           collect acronyms for the Glossary attachment
-  attachments.py        Attachment N—TITLE rebuild and Glossary seeding
-  hygiene.py            whitespace, smart-quote, dash cleanup
-  report.py             before/after change log (sidecar .txt)
+  template.py           zip-surgery: styles/numbering/headers/footers + page setup
+  formatter.py          orchestrator: format_file(src, output_dir, template)
+  hygiene.py            whitespace + smart-quote cleanup (runs in both modes)
+  report.py             sidecar change log
   batch.py              folder iteration
   cli.py                argparse entry point
   gui.py                Tkinter GUI
-  __main__.py           `python -m usaf_oi_formatter`
-tools/
-  build-exe.ps1         PyInstaller wrapper -> dist\*.exe
+  rules.py              output naming constants
+tools/build-exe.ps1     PyInstaller wrapper -> dist\*.exe
 tests/
-  test_rules.py
-  test_formatter.py     end-to-end smoke test
-  samples/              drop your own .docx fixtures here
-docs/rules.md           rule citation table
+  test_formatter.py     covers template and hygiene-only paths
+wheels/                 prebuilt Windows wheels for offline install
+docs/rules.md           notes on which rules the tool does and doesn't enforce
 pyproject.toml
 ```
 
 ## Prerequisites
 
-- **Python 3.10+** (any modern cpython; uses only `python-docx`, `lxml`, and
-  stdlib `tkinter`).
-- **Word 2016+** only if you want to *view* the formatted `.docx`. The
-  formatter itself never launches Word.
+- **Python 3.10+** (the tool itself + dependencies: `python-docx`, `lxml`).
+- **Word 2016+** only to *view* the formatted `.docx` — the formatter never
+  launches Word.
 
-To build the standalone `.exe`:
-- PowerShell 5.1+ on Windows.
-- The `[dev]` extra (PyInstaller); `tools\build-exe.ps1` installs it into a
-  throwaway `.venv-build`.
+## Install
 
-## Install (developer / editable)
+### Online (developer workstation)
 
-```bash
-python -m venv .venv
-.venv\Scripts\activate       # Windows
-# source .venv/bin/activate    # macOS/Linux
-pip install -e .[dev]
+```powershell
+py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
+.\.venv\Scripts\python.exe -m pip install -e ".[dev]"
+```
+
+### Offline (locked-down USAF workstation)
+
+PyPI is often unreachable through corporate TLS inspection. The repo ships
+with prebuilt Windows wheels in `wheels/`:
+
+```powershell
+py -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --no-index --find-links .\wheels `
+    setuptools wheel
+.\.venv\Scripts\python.exe -m pip install --no-index --find-links .\wheels `
+    python-docx lxml
+.\.venv\Scripts\python.exe -m pip install --no-deps --no-build-isolation -e .
 ```
 
 ## CLI usage
 
-Single file:
+Single draft, using an approved OI as the template:
 
-```
-usaf-oi-formatter C:\incoming\MyOI.docx ^
-    --opr "CCSD/CCC" --oi-number "CCSD OI 36-1" ^
-    --date "23 April 2026" --subject "Personnel Actions" ^
-    --unit "442d Maintenance Squadron" --category "Personnel" ^
-    --certified-by "Col Jane Doe, Commander" --pages 12
+```powershell
+.\.venv\Scripts\usaf-oi-formatter.exe "Draft OI 17-1203.docx" `
+    --template "Approved OI 17-1203.docx"
 ```
 
-Recursive batch with custom output directory:
+Whole folder of drafts against one template:
 
+```powershell
+.\.venv\Scripts\usaf-oi-formatter.exe "C:\incoming" --recurse `
+    --template "Approved OI 17-1203.docx" --output-dir "C:\out"
 ```
-usaf-oi-formatter C:\incoming --recurse --output-dir C:\out
+
+No template — just do hygiene (whitespace/quotes), don't touch structure:
+
+```powershell
+.\.venv\Scripts\usaf-oi-formatter.exe "Draft.docx"
 ```
 
-Exit code is `0` on success, `1` if any file failed. See the emitted
-`*_changes.txt` and the master `batch_<timestamp>.log` for details.
-
-Run `usaf-oi-formatter --help` for the full flag list.
+Each run writes `<name>_formatted.docx` plus `<name>_formatted_changes.txt`.
 
 ## GUI usage
 
-```
-usaf-oi-formatter-gui
+```powershell
+.\.venv\Scripts\usaf-oi-formatter-gui.exe
 ```
 
-Tabs: **Input** (single file or batch folder + output folder) and
-**OI Metadata** (Unit, OI number, date, OPR, Supersedes, ...). Metadata
-values persist to `~/.usaf_oi_formatter.json` so recurring fields don't need
-retyping.
+Tkinter dialog with fields for the draft (or folder), the approved
+template, and an optional output folder. Values persist to
+`~/.usaf_oi_formatter.json` between runs.
 
 ## Build a standalone Windows `.exe`
 
-For use on machines without Python installed:
+For machines without Python:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File tools\build-exe.ps1 -Clean
 ```
 
-Produces `dist\usaf-oi-formatter.exe` (CLI) and
-`dist\usaf-oi-formatter-gui.exe` (windowed Tk app). Both are self-contained
-and can be copied to any Windows machine.
+Produces `dist\usaf-oi-formatter.exe` and `dist\usaf-oi-formatter-gui.exe`
+— self-contained, no Python install required on the target machine.
 
 ## Tests
 
-```bash
-pytest
+```powershell
+.\.venv\Scripts\pytest.exe
 ```
 
-Includes an end-to-end test that builds a non-compliant `.docx`, runs the
-full pipeline, and asserts the output has the expected styles, title block,
-and glossary attachment.
+Covers both the template-copy and hygiene-only paths.
 
-## Changing rules
+## What it does not do
 
-1. Edit `src/usaf_oi_formatter/rules.py`.
-2. Update the corresponding row in `docs/rules.md` with the AFH/DAFMAN
-   citation.
-3. `pytest` to confirm nothing regressed.
-4. Run the tool against a sample `.docx` and open it in Word to eyeball.
-5. Rebuild the `.exe` if you distribute it: `tools\build-exe.ps1 -Clean`.
+The tool is intentionally **structural** — it does not try to enforce
+Tongue and Quill *prose* guidelines (voice, acronym first-use, sentence
+length, etc.). Those still need a human reviewer. If you want automated
+linting for those, file an issue describing which rules matter most and
+we can add a `--lint` mode that reports (but doesn't auto-fix) violations.
 
 ## License
 
