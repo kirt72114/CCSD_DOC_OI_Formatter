@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "usaf-oi-formatter"
+version = "0.1.0"
+description = "Auto-format USAF Operating Instructions to AFH 33-337 / DAFMAN 90-161 compliance"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { file = "LICENSE" }
+authors = [{ name = "CCSD" }]
+dependencies = [
+    "python-docx>=1.1.0",
+    "lxml>=5.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pyinstaller>=6.0",
+]
+
+[project.scripts]
+usaf-oi-formatter = "usaf_oi_formatter.cli:main"
+usaf-oi-formatter-gui = "usaf_oi_formatter.gui:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
