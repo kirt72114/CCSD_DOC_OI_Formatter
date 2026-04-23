@@ -70,17 +70,18 @@ def run(paths: Iterable[Path],
 def _iter_docx(paths: Iterable[Path], recurse: bool):
     for raw in paths:
         p = Path(raw)
-        if p.is_file() and _is_docx(p):
+        if p.is_file() and _is_word_doc(p):
             yield p
         elif p.is_dir():
-            pattern = "**/*.docx" if recurse else "*.docx"
-            for found in p.glob(pattern):
-                if _is_docx(found) and not _is_formatter_output(found):
-                    yield found
+            for ext in ("docx", "doc"):
+                pattern = f"**/*.{ext}" if recurse else f"*.{ext}"
+                for found in p.glob(pattern):
+                    if _is_word_doc(found) and not _is_formatter_output(found):
+                        yield found
 
 
-def _is_docx(p: Path) -> bool:
-    return p.suffix.lower() == ".docx"
+def _is_word_doc(p: Path) -> bool:
+    return p.suffix.lower() in (".docx", ".docm", ".doc")
 
 
 def _is_formatter_output(p: Path) -> bool:

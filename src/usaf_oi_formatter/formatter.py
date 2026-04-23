@@ -17,6 +17,7 @@ from pathlib import Path
 
 import docx
 
+from . import convert
 from . import hygiene
 from . import report as report_mod
 from . import rules
@@ -39,12 +40,30 @@ def format_file(src: Path,
 
     report = report_mod.ChangeReport(src)
 
+    # Auto-convert legacy .doc inputs via Word COM so the rest of the
+    # pipeline can work with .docx XML.
+    if src.suffix.lower() == ".doc":
+        report.note("convert", f"Converting {src.name} from .doc to .docx via Word")
+        src_docx = convert.ensure_docx(src)
+    else:
+        src_docx = src
+
+    tpl_docx: Path | None = None
     if template is not None:
-        report.note("template", f"Cloning formatting from {Path(template).name}")
-        template_mod.apply_template(src, Path(template), out_path)
+        tpl_path = Path(template)
+        if tpl_path.suffix.lower() == ".doc":
+            report.note(
+                "convert", f"Converting template {tpl_path.name} to .docx via Word")
+            tpl_docx = convert.ensure_docx(tpl_path)
+        else:
+            tpl_docx = tpl_path
+
+    if tpl_docx is not None:
+        report.note("template", f"Cloning formatting from {tpl_docx.name}")
+        template_mod.apply_template(src_docx, tpl_docx, out_path)
     else:
         report.note("copy", "No template supplied; performing hygiene only")
-        shutil.copyfile(src, out_path)
+        shutil.copyfile(src_docx, out_path)
 
     doc = docx.Document(str(out_path))
     report.snapshot_pre(_snapshot(doc))
@@ -62,7 +81,9 @@ def format_file(src: Path,
 
 
 def _output_path(src: Path, output_dir: Path | None) -> Path:
-    new_name = src.stem + rules.OUTPUT_SUFFIX + src.suffix
+    # Always emit .docx. If source is .doc, we've already upgraded it in
+    # memory, and saving back as .doc would lose everything we just did.
+    new_name = src.stem + rules.OUTPUT_SUFFIX + ".docx"
     if output_dir is None:
         return src.with_name(new_name)
     return Path(output_dir) / new_name

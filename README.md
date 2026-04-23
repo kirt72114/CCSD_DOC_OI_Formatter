@@ -75,9 +75,13 @@ py -m venv .venv
 .\.venv\Scripts\python.exe -m pip install --no-index --find-links .\wheels `
     setuptools wheel
 .\.venv\Scripts\python.exe -m pip install --no-index --find-links .\wheels `
-    python-docx lxml
+    python-docx lxml pywin32
 .\.venv\Scripts\python.exe -m pip install --no-deps --no-build-isolation -e .
 ```
+
+`pywin32` is only needed if you pass legacy `.doc` files as the draft or the
+template; it drives Word via COM to upconvert them to `.docx`. Skip it if you
+only work with `.docx`.
 
 ## CLI usage
 
@@ -86,6 +90,16 @@ Single draft, using an approved OI as the template:
 ```powershell
 .\.venv\Scripts\usaf-oi-formatter.exe "Draft OI 17-1203.docx" `
     --template "Approved OI 17-1203.docx"
+```
+
+Legacy `.doc` templates (or drafts) are accepted too — the tool runs a
+headless Word instance via `pywin32` to convert them to `.docx` in a temp
+folder before the template-clone step. The output is always `.docx`:
+
+```powershell
+.\.venv\Scripts\usaf-oi-formatter.exe "Draft OI 17-1203.doc" `
+    --template "Approved OI 17-1203 28 Jul 17.doc"
+# -> Draft OI 17-1203_formatted.docx
 ```
 
 Whole folder of drafts against one template:
