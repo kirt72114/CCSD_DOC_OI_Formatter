@@ -6,38 +6,42 @@ from docx.document import Document
 from docx.shared import Inches
 
 from . import rules
+from .profile import FormattingProfile, default as _default_profile
 
-# Glyphs we treat as "this paragraph starts with a bullet".
-BULLET_CHARS = set("-*o" + "".join([rules.BULLET_L2, rules.BULLET_L3, rules.BULLET_L4,
-                                    "–", "—", "▪"]))
 
 _NON_BULLET_STYLES = set(rules.HEADING_STYLES) | {
     rules.STY_TITLE, rules.STY_TITLEBLOCK, rules.STY_ATTACH_TITLE
 }
 
+# Glyphs we treat as "this paragraph starts with a bullet". Static set
+# (covers any reasonable input doc, regardless of profile choices).
+BULLET_CHARS = set("-*o•–—»▪")
 
-def apply(doc: Document) -> None:
-    for p in doc.paragraphs:
-        if p.style.name in _NON_BULLET_STYLES:
+
+def apply(doc: Document, profile: FormattingProfile | None = None) -> None:
+    p = profile or _default_profile()
+    indent_step = max(0.05, p.bullet_indent_step_in)
+
+    for para in doc.paragraphs:
+        if para.style.name in _NON_BULLET_STYLES:
             continue
 
-        text = p.text
+        text = para.text
         if len(text) < 2 or text[0] not in BULLET_CHARS:
             continue
 
-        level = _level_from_indent(p)
-        _replace_leading_bullet(p, rules.bullet_for_level(level))
-        p.style = doc.styles[rules.bullet_style_for_level(level)]
+        level = _level_from_indent(para, indent_step)
+        _replace_leading_bullet(para, p.bullet_for_level(level))
+        para.style = doc.styles[p.bullet_style_for_level(level)]
 
 
-def _level_from_indent(paragraph) -> int:
+def _level_from_indent(paragraph, indent_step_in: float) -> int:
     pf = paragraph.paragraph_format
     left = pf.left_indent
     if left is None:
         return 1
-    # 0.25" per level; clamp 1..4
-    quarter_inch = Inches(0.25)
-    level = int(left / quarter_inch) + 1
+    step = Inches(indent_step_in)
+    level = int(left / step) + 1
     return max(1, min(level, 4))
 
 

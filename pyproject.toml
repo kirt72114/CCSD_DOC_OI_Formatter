@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "usaf-oi-formatter"
-version = "0.1.0"
+version = "0.2.0"
 description = "Auto-format USAF Operating Instructions to AFH 33-337 / DAFMAN 90-161 compliance"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -19,6 +19,9 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "pyinstaller>=6.0",
+]
+gui = [
+    "tkinterdnd2>=0.4",
 ]
 
 [project.scripts]

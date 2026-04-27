@@ -7,6 +7,7 @@ import re
 from docx.document import Document
 
 from . import rules
+from .profile import FormattingProfile, default as _default_profile
 
 _ATTACH_RE = re.compile(
     rf"^\s*attachment\s+(\d+)\s*[\-{rules.ATTACH_SEP}–:.]?\s*(.*)$",
@@ -14,9 +15,11 @@ _ATTACH_RE = re.compile(
 )
 
 
-def apply(doc: Document, glossary: dict[str, str]) -> None:
+def apply(doc: Document, glossary: dict[str, str],
+          profile: FormattingProfile | None = None) -> None:
+    p = profile or _default_profile()
     _normalize_existing(doc)
-    if not _has_attachment_1(doc):
+    if p.seed_glossary and not _has_attachment_1(doc):
         _insert_glossary(doc, glossary)
 
 

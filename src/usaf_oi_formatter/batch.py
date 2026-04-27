@@ -9,6 +9,7 @@ from typing import Iterable
 
 from . import formatter, rules
 from .meta import OIMeta
+from .profile import FormattingProfile
 
 
 @dataclass
@@ -17,6 +18,7 @@ class BatchResult:
     formatted: Path | None
     report: Path | None
     error: str | None
+    lint: Path | None = None
 
     @property
     def ok(self) -> bool:
@@ -26,13 +28,16 @@ class BatchResult:
 def run(paths: Iterable[Path], meta: OIMeta,
         output_dir: Path | None = None,
         recurse: bool = False,
-        log_sink=None) -> list[BatchResult]:
+        log_sink=None,
+        profile: FormattingProfile | None = None,
+        run_lint: bool = False) -> list[BatchResult]:
     """Format every .docx under the given paths.
 
     `paths` may contain files or directories. When `recurse`, directories
     are walked recursively. Writes a master log next to the first path if
     `log_sink` is None.
     """
+    paths = list(paths)
     targets = list(_iter_docx(paths, recurse))
     results: list[BatchResult] = []
 
@@ -46,12 +51,18 @@ def run(paths: Iterable[Path], meta: OIMeta,
 
     try:
         log_sink.write(f"USAF OI Formatter batch run {datetime.now().isoformat()}\n")
-        log_sink.write(f"Files: {len(targets)}\n\n")
+        log_sink.write(f"Files: {len(targets)}\n")
+        if profile is not None:
+            log_sink.write(f"Profile: {profile.name}\n")
+        log_sink.write("\n")
 
         for target in targets:
             try:
-                out_path, report_path = formatter.format_file(target, meta, output_dir)
-                results.append(BatchResult(target, out_path, report_path, None))
+                result = formatter.format_file(
+                    target, meta, output_dir, profile, run_lint=run_lint)
+                out_path, report_path = result[0], result[1]
+                lint_path = result[2] if len(result) == 3 else None
+                results.append(BatchResult(target, out_path, report_path, None, lint_path))
                 log_sink.write(f"OK    {target}  ->  {out_path}\n")
             except Exception as exc:  # noqa: BLE001 - batch keeps going
                 results.append(BatchResult(target, None, None, str(exc)))

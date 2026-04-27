@@ -7,8 +7,9 @@ import sys
 from pathlib import Path
 
 from . import batch as batch_mod
-from . import formatter
+from . import formatter, templates
 from .meta import OIMeta
+from .profile import FormattingProfile
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -23,6 +24,18 @@ def build_parser() -> argparse.ArgumentParser:
                    help="When `path` is a folder, recurse into subfolders.")
     p.add_argument("--output-dir", type=Path, default=None,
                    help="Write formatted files here instead of alongside sources.")
+
+    profile_group = p.add_argument_group("Formatting profile")
+    profile_group.add_argument(
+        "--template", default="Tongue and Quill",
+        choices=templates.builtin_names(),
+        help="Built-in template to start from. Default: Tongue and Quill.")
+    profile_group.add_argument(
+        "--profile-file", type=Path, default=None,
+        help="JSON file (saved from the GUI) overriding the built-in template.")
+    profile_group.add_argument(
+        "--lint", action="store_true",
+        help="Also run the prose-level T&Q lint pass and write a *_lint.txt sidecar.")
 
     meta = p.add_argument_group("OI metadata (DAFMAN 90-161 title block)")
     meta.add_argument("--unit", default="", help='e.g. "442D MAINTENANCE SQUADRON"')
@@ -61,32 +74,52 @@ def main(argv: list[str] | None = None) -> int:
         releasability=args.releasability,
     )
 
+    profile = _load_profile(args.template, args.profile_file)
+    warnings = profile.validate()
+    if warnings and args.verbose:
+        for w in warnings:
+            print(f"WARN: {w}", file=sys.stderr)
+
     path = args.path
     if path.is_file():
-        return _run_single(path, meta, args.output_dir, args.verbose)
+        return _run_single(path, meta, args.output_dir, profile, args.lint, args.verbose)
     if path.is_dir():
-        return _run_batch(path, meta, args.output_dir, args.recurse, args.verbose)
+        return _run_batch(path, meta, args.output_dir, args.recurse,
+                          profile, args.lint, args.verbose)
 
     print(f"error: {path} is not a file or directory", file=sys.stderr)
     return 2
 
 
+def _load_profile(template_name: str, profile_file: Path | None) -> FormattingProfile:
+    if profile_file is not None:
+        return FormattingProfile.load(profile_file)
+    return templates.get_builtin(template_name)
+
+
 def _run_single(path: Path, meta: OIMeta, output_dir: Path | None,
+                profile: FormattingProfile, run_lint: bool,
                 verbose: bool) -> int:
     try:
-        out, report = formatter.format_file(path, meta, output_dir)
+        result = formatter.format_file(
+            path, meta, output_dir, profile, run_lint=run_lint)
     except Exception as exc:  # noqa: BLE001
         print(f"FAIL {path}: {exc}", file=sys.stderr)
         return 1
+    out, report = result[0], result[1]
     print(f"OK   {path} -> {out}")
     if verbose:
         print(f"     report: {report}")
+        if run_lint and len(result) == 3:
+            print(f"     lint:   {result[2]}")
     return 0
 
 
 def _run_batch(path: Path, meta: OIMeta, output_dir: Path | None,
-               recurse: bool, verbose: bool) -> int:
-    results = batch_mod.run([path], meta, output_dir=output_dir, recurse=recurse)
+               recurse: bool, profile: FormattingProfile,
+               run_lint: bool, verbose: bool) -> int:
+    results = batch_mod.run([path], meta, output_dir=output_dir, recurse=recurse,
+                            profile=profile, run_lint=run_lint)
     failures = [r for r in results if not r.ok]
     for r in results:
         status = "OK  " if r.ok else "FAIL"
