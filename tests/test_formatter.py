@@ -8,8 +8,9 @@ import pytest
 
 docx = pytest.importorskip("docx")
 
-from usaf_oi_formatter import formatter, rules
+from usaf_oi_formatter import formatter, rules, templates
 from usaf_oi_formatter.meta import OIMeta
+from usaf_oi_formatter.profile import FormattingProfile
 
 
 def _make_sample(path: Path) -> None:
@@ -67,3 +68,46 @@ def test_end_to_end(tmp_path: Path) -> None:
 
     # Change report is non-empty.
     assert report_path.read_text(encoding="utf-8").strip()
+
+
+def test_custom_profile_changes_margins(tmp_path: Path) -> None:
+    src = tmp_path / "raw.docx"
+    _make_sample(src)
+
+    profile = FormattingProfile.tongue_and_quill().copy(
+        name="Half-inch margins",
+        margin_top_in=0.5, margin_bottom_in=0.5,
+        margin_left_in=0.5, margin_right_in=0.5,
+    )
+    out_path, _ = formatter.format_file(src, OIMeta(), profile=profile)
+
+    result = docx.Document(str(out_path))
+    section = result.sections[0]
+    # 0.5 in == 457200 EMU
+    assert section.top_margin.emu == 457200
+    assert section.left_margin.emu == 457200
+
+
+def test_lint_sidecar_written_when_requested(tmp_path: Path) -> None:
+    src = tmp_path / "raw.docx"
+    _make_sample(src)
+
+    result = formatter.format_file(
+        src, OIMeta(), profile=templates.default(), run_lint=True)
+
+    assert len(result) == 3
+    out_path, report_path, lint_path = result
+    assert lint_path.exists()
+    assert "lint" in lint_path.name
+
+
+def test_disable_glossary_skips_attachment_1(tmp_path: Path) -> None:
+    src = tmp_path / "raw.docx"
+    _make_sample(src)
+
+    profile = FormattingProfile.tongue_and_quill().copy(seed_glossary=False)
+    out_path, _ = formatter.format_file(src, OIMeta(), profile=profile)
+
+    result = docx.Document(str(out_path))
+    text = "\n".join(p.text for p in result.paragraphs)
+    assert rules.GLOSSARY_TITLE not in text

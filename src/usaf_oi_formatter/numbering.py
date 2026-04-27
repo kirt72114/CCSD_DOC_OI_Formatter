@@ -12,18 +12,22 @@ from docx.oxml.ns import qn
 from lxml import etree
 
 from . import rules
+from .profile import FormattingProfile, default as _default_profile
 
 W = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
 
 
-def apply(doc: Document) -> None:
+def apply(doc: Document, profile: FormattingProfile | None = None) -> None:
+    p = profile or _default_profile()
     numbering_part = _ensure_numbering_part(doc)
-    abs_id, num_id = _ensure_oi_numbering(numbering_part)
+    abs_id, num_id = _ensure_oi_numbering(numbering_part, p)
 
-    for p in doc.paragraphs:
-        if p.style.name in rules.HEADING_STYLES:
-            level = rules.HEADING_STYLES.index(p.style.name)
-            _attach_numbering(p, num_id, level)
+    for para in doc.paragraphs:
+        if para.style.name in rules.HEADING_STYLES:
+            level = rules.HEADING_STYLES.index(para.style.name)
+            if level >= p.max_number_depth:
+                continue
+            _attach_numbering(para, num_id, level)
 
 
 # --- numbering.xml plumbing -----------------------------------------
@@ -32,15 +36,12 @@ def _ensure_numbering_part(doc: Document):
     """Return the document's numbering part, creating it if absent."""
     part = doc.part.numbering_part
     if part is None:
-        # python-docx lazily creates this only when add_num is called.
-        # Force creation via a throwaway abstractNum.
         part = _create_numbering_part(doc)
     return part
 
 
 def _create_numbering_part(doc: Document):
     from docx.opc.constants import CONTENT_TYPE, RELATIONSHIP_TYPE
-    from docx.opc.part import PartFactory
     from docx.opc.packuri import PackURI
     from docx.parts.numbering import NumberingPart
 
@@ -59,12 +60,11 @@ def _create_numbering_part(doc: Document):
     return part
 
 
-def _ensure_oi_numbering(numbering_part) -> tuple[int, int]:
+def _ensure_oi_numbering(numbering_part, profile: FormattingProfile) -> tuple[int, int]:
     """Insert (idempotent) an abstractNum for the OI scheme and a num that
     references it. Returns (abstractNumId, numId)."""
     root = numbering_part.element
 
-    # Reuse if we've already installed the OI list.
     for abs_num in root.findall(qn("w:abstractNum")):
         nsid = abs_num.find(qn("w:nsid"))
         if nsid is not None and nsid.get(qn("w:val")) == "0FC0FFEE":
@@ -77,8 +77,7 @@ def _ensure_oi_numbering(numbering_part) -> tuple[int, int]:
     abs_id = _next_id(root, qn("w:abstractNum"), qn("w:abstractNumId"))
     num_id = _next_id(root, qn("w:num"), qn("w:numId"))
 
-    abs_num = _build_abstract_num(abs_id)
-    # abstractNum must come before num in numbering.xml.
+    abs_num = _build_abstract_num(abs_id, profile)
     first_num = root.find(qn("w:num"))
     if first_num is not None:
         first_num.addprevious(abs_num)
@@ -98,7 +97,7 @@ def _next_id(root, tag: str, id_attr: str) -> int:
     return (max(ids) + 1) if ids else 1
 
 
-def _build_abstract_num(abs_id: int) -> etree._Element:
+def _build_abstract_num(abs_id: int, profile: FormattingProfile) -> etree._Element:
     abs_num = etree.Element(qn("w:abstractNum"))
     abs_num.set(qn("w:abstractNumId"), str(abs_id))
 
@@ -108,7 +107,11 @@ def _build_abstract_num(abs_id: int) -> etree._Element:
     multi = etree.SubElement(abs_num, qn("w:multiLevelType"))
     multi.set(qn("w:val"), "multilevel")
 
-    for i in range(rules.MAX_NUMBER_DEPTH):
+    # Twips per indent step (1 inch = 1440 twips; default 0.25" = 360).
+    step_twips = int(round(profile.number_indent_step_in * 1440))
+    depth = max(1, min(profile.max_number_depth, 9))
+
+    for i in range(depth):
         lvl = etree.SubElement(abs_num, qn("w:lvl"))
         lvl.set(qn("w:ilvl"), str(i))
 
@@ -119,7 +122,6 @@ def _build_abstract_num(abs_id: int) -> etree._Element:
         fmt.set(qn("w:val"), "decimal")
 
         lvl_text = etree.SubElement(lvl, qn("w:lvlText"))
-        # "%1." / "%1.%2." / ...
         lvl_text.set(qn("w:val"), "".join(f"%{n + 1}." for n in range(i + 1)))
 
         jc = etree.SubElement(lvl, qn("w:lvlJc"))
@@ -127,9 +129,8 @@ def _build_abstract_num(abs_id: int) -> etree._Element:
 
         ppr = etree.SubElement(lvl, qn("w:pPr"))
         ind = etree.SubElement(ppr, qn("w:ind"))
-        # 0.25" per level, 20ths of a point (1 inch = 1440 twips)
-        ind.set(qn("w:left"), str(int(360 * (i + 1))))
-        ind.set(qn("w:hanging"), "360")
+        ind.set(qn("w:left"), str(step_twips * (i + 1)))
+        ind.set(qn("w:hanging"), str(step_twips))
 
     return abs_num
 
@@ -141,7 +142,6 @@ def _attach_numbering(paragraph, num_id: int, level: int) -> None:
         pPr = etree.SubElement(p, qn("w:pPr"))
         p.insert(0, pPr)
 
-    # Replace any existing numPr.
     existing = pPr.find(qn("w:numPr"))
     if existing is not None:
         pPr.remove(existing)

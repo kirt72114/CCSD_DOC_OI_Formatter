@@ -13,6 +13,7 @@ from . import (
     bullets,
     headerblock,
     hygiene,
+    lint as lint_mod,
     numbering,
     pagesetup,
     report as report_mod,
@@ -20,48 +21,61 @@ from . import (
     styles,
 )
 from .meta import OIMeta
+from .profile import FormattingProfile, default as _default_profile
 
 _RE_NUMBERED_HEADING = re.compile(r"^(\d+(?:\.\d+){0,4})\.?\s+")
 
 
-def format_file(src: Path, meta: OIMeta, output_dir: Path | None = None) -> tuple[Path, Path]:
+def format_file(
+    src: Path,
+    meta: OIMeta,
+    output_dir: Path | None = None,
+    profile: FormattingProfile | None = None,
+    *,
+    run_lint: bool = False,
+) -> tuple[Path, Path] | tuple[Path, Path, Path]:
     """Format `src` and save next to it (or into `output_dir`).
 
-    Returns (formatted_path, report_path).
+    Returns (formatted_path, report_path) — or, when `run_lint=True`,
+    (formatted_path, report_path, lint_report_path).
     """
     src = Path(src)
+    profile = profile or _default_profile()
     doc = docx.Document(str(src))
 
     report = report_mod.ChangeReport(src)
     report.snapshot_pre(_snapshot(doc))
+    report.note("profile", f"Using profile: {profile.name}")
 
     report.note("page", "Applying margins and page setup")
-    pagesetup.apply(doc)
+    pagesetup.apply(doc, profile)
 
     report.note("styles", "Installing OI styles")
-    styles.install_or_refresh(doc)
+    styles.install_or_refresh(doc, profile)
 
-    report.note("header", "Rebuilding DAFMAN 90-161 title block")
-    headerblock.rebuild(doc, meta.with_defaults())
+    if profile.rebuild_title_block:
+        report.note("header", "Rebuilding DAFMAN 90-161 title block")
+        headerblock.rebuild(doc, meta.with_defaults(), profile)
 
     report.note("walk", "Classifying paragraphs")
     _classify_paragraphs(doc)
 
     report.note("numbering", "Applying 1. / 1.1. / 1.1.1. numbering")
-    numbering.apply(doc)
+    numbering.apply(doc, profile)
 
     report.note("bullets", "Normalizing bullets")
-    bullets.apply(doc)
+    bullets.apply(doc, profile)
 
     report.note("acronyms", "Collecting acronyms")
     glossary = acronyms.collect(doc)
     report.note("acronyms", f"Found {len(glossary)} acronyms")
 
     report.note("attachments", "Rebuilding attachment titles")
-    attachments.apply(doc, glossary)
+    attachments.apply(doc, glossary, profile)
 
-    report.note("hygiene", "Whitespace / quotes / dashes")
-    hygiene.apply(doc)
+    if profile.apply_hygiene:
+        report.note("hygiene", "Whitespace / quotes / dashes")
+        hygiene.apply(doc, profile)
 
     report.diff_post(_snapshot(doc))
 
@@ -70,6 +84,13 @@ def format_file(src: Path, meta: OIMeta, output_dir: Path | None = None) -> tupl
     doc.save(str(out_path))
 
     report_path = report.write_sidecar(out_path)
+
+    if run_lint:
+        lint_findings = lint_mod.lint_document(doc)
+        lint_path = _lint_report_path(out_path)
+        lint_mod.write_report(lint_findings, lint_path)
+        return out_path, report_path, lint_path
+
     return out_path, report_path
 
 
@@ -78,6 +99,10 @@ def _output_path(src: Path, output_dir: Path | None) -> Path:
     if output_dir is None:
         return src.with_name(new_name)
     return Path(output_dir) / new_name
+
+
+def _lint_report_path(out_docx: Path) -> Path:
+    return out_docx.with_name(out_docx.stem + "_lint.txt")
 
 
 def _snapshot(doc) -> dict[str, str]:

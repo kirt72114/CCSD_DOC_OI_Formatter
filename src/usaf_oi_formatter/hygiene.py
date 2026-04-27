@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from docx.document import Document
 
+from .profile import FormattingProfile, default as _default_profile
+
 _REPLACEMENTS = [
     (".  ", ". "),
     ("  ", " "),
@@ -14,7 +16,10 @@ _REPLACEMENTS = [
 ]
 
 
-def apply(doc: Document) -> None:
+def apply(doc: Document, profile: FormattingProfile | None = None) -> None:
+    p = profile or _default_profile()
+    if not p.apply_hygiene:
+        return
     for p in doc.paragraphs:
         for run in p.runs:
             text = run.text

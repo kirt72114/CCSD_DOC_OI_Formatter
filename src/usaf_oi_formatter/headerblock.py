@@ -17,14 +17,17 @@ from lxml import etree
 
 from . import rules
 from .meta import OIMeta
+from .profile import FormattingProfile, default as _default_profile
 
 
-def rebuild(doc: Document, meta: OIMeta) -> None:
+def rebuild(doc: Document, meta: OIMeta,
+            profile: FormattingProfile | None = None) -> None:
+    profile = profile or _default_profile()
     # 1. Build the pieces at the end of the doc using python-docx APIs.
-    top_table = _build_top_table(doc, meta)
+    top_table = _build_top_table(doc, meta, profile)
     compliance_p = _build_compliance_line(doc)
-    access_p, release_p = _build_access_release(doc, meta)
-    opr_table = _build_opr_table(doc, meta)
+    access_p, release_p = _build_access_release(doc, meta, profile)
+    opr_table = _build_opr_table(doc, meta, profile)
     rule_p = _build_horizontal_rule(doc)
 
     # 2. Collect their XML elements in order.
@@ -69,7 +72,7 @@ def _find_first_heading(doc: Document):
 
 # ---------- component builders ---------------------------------------
 
-def _build_top_table(doc: Document, meta: OIMeta):
+def _build_top_table(doc: Document, meta: OIMeta, profile: FormattingProfile):
     table = doc.add_table(rows=1, cols=2)
     table.alignment = WD_TABLE_ALIGNMENT.LEFT
     table.autofit = False
@@ -78,12 +81,12 @@ def _build_top_table(doc: Document, meta: OIMeta):
     _kill_borders(table)
 
     _set_cell_lines(
-        doc, table.cell(0, 0),
+        doc, table.cell(0, 0), profile,
         [(rules.LBL_BYORDER, True),
          (_nonempty(meta.unit.upper(), "UNIT"), False)],
     )
     _set_cell_lines(
-        doc, table.cell(0, 1),
+        doc, table.cell(0, 1), profile,
         [(_nonempty(meta.oi_number.upper(), "UNIT OPERATING INSTRUCTION XX-X"), True),
          (_nonempty(meta.date_str, "DD Month YYYY"), False),
          ("", False),
@@ -102,9 +105,9 @@ def _build_compliance_line(doc: Document):
     return p
 
 
-def _build_access_release(doc: Document, meta: OIMeta):
-    acc = _nonempty(meta.accessibility, rules.DEFAULT_ACCESSIBILITY)
-    rel = _nonempty(meta.releasability, rules.DEFAULT_RELEASABILITY)
+def _build_access_release(doc: Document, meta: OIMeta, profile: FormattingProfile):
+    acc = _nonempty(meta.accessibility, profile.default_accessibility)
+    rel = _nonempty(meta.releasability, profile.default_releasability)
 
     access_p = doc.add_paragraph(f"{rules.LBL_ACCESSIBILITY}  {acc}")
     access_p.style = doc.styles[rules.STY_TITLEBLOCK]
@@ -114,7 +117,7 @@ def _build_access_release(doc: Document, meta: OIMeta):
     return access_p, release_p
 
 
-def _build_opr_table(doc: Document, meta: OIMeta):
+def _build_opr_table(doc: Document, meta: OIMeta, profile: FormattingProfile):
     table = doc.add_table(rows=2, cols=2)
     table.autofit = False
     for col in table.columns:
@@ -122,19 +125,19 @@ def _build_opr_table(doc: Document, meta: OIMeta):
     _kill_borders(table)
 
     _set_cell_lines(
-        doc, table.cell(0, 0),
+        doc, table.cell(0, 0), profile,
         [(f"{rules.LBL_OPR} {_nonempty(meta.opr, 'OPR')}", False)],
     )
     _set_cell_lines(
-        doc, table.cell(0, 1),
+        doc, table.cell(0, 1), profile,
         [(f"{rules.LBL_CERTIFIED_BY} {_nonempty(meta.certified_by, 'TBD')}", False)],
     )
     _set_cell_lines(
-        doc, table.cell(1, 0),
+        doc, table.cell(1, 0), profile,
         [(f"{rules.LBL_SUPERSEDES} {_nonempty(meta.supersedes, 'N/A')}", False)],
     )
     _set_cell_lines(
-        doc, table.cell(1, 1),
+        doc, table.cell(1, 1), profile,
         [(f"{rules.LBL_PAGES} {_nonempty(meta.pages, 'TBD')}", False)],
     )
     return table
@@ -166,7 +169,8 @@ def _kill_borders(table) -> None:
         b.set(qn("w:val"), "nil")
 
 
-def _set_cell_lines(doc: Document, cell, lines: list[tuple[str, bool]]) -> None:
+def _set_cell_lines(doc: Document, cell, profile: FormattingProfile,
+                    lines: list[tuple[str, bool]]) -> None:
     cell.text = ""
     first_para = cell.paragraphs[0]
     first_para.style = doc.styles[rules.STY_TITLEBLOCK]
@@ -180,8 +184,8 @@ def _set_cell_lines(doc: Document, cell, lines: list[tuple[str, bool]]) -> None:
             r._element.getparent().remove(r._element)
         run = p.add_run(line)
         run.bold = bold
-        run.font.name = rules.TITLEBLOCK_FONT
-        run.font.size = Pt(rules.TITLEBLOCK_SIZE_PT)
+        run.font.name = profile.titleblock_font
+        run.font.size = Pt(profile.titleblock_size_pt)
 
 
 def _nonempty(value: str, fallback: str) -> str:
